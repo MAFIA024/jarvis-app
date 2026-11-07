@@ -807,5 +807,5 @@ class MainActivity : Activity() {
         player?.release()
         super.onDestroy()
     }
-
+}
     
