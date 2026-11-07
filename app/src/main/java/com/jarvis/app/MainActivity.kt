@@ -34,6 +34,26 @@ class MainActivity : Activity() {
     private lateinit var result: TextView
     private lateinit var reply: TextView
 
+    private val openWords = listOf(
+        "खोलो", "खोलिए", "खोल दो", "खोल", "चालू करो", "चलाओ",
+        "kholo", "open", "start"
+    )
+
+    private val aliases = listOf(
+        "यूट्यूब" to "youtube", "यू ट्यूब" to "youtube",
+        "व्हाट्सएप" to "whatsapp", "व्हाट्सऐप" to "whatsapp",
+        "वॉट्सऐप" to "whatsapp", "वाट्सएप" to "whatsapp", "वाट्सऐप" to "whatsapp",
+        "कैमरा" to "camera", "क्रोम" to "chrome",
+        "सेटिंग्स" to "settings", "सेटिंग" to "settings",
+        "गैलरी" to "gallery", "फोटो" to "photos", "गूगल" to "google",
+        "मैप्स" to "maps", "मैप" to "maps",
+        "इंस्टाग्राम" to "instagram", "फेसबुक" to "facebook",
+        "कैलकुलेटर" to "calculator", "घड़ी" to "clock",
+        "फोन" to "phone", "मैसेज" to "messages", "जीमेल" to "gmail",
+        "टेलीग्राम" to "telegram", "स्पॉटिफाई" to "spotify",
+        "प्ले स्टोर" to "play store", "प्लेस्टोर" to "play store"
+    )
+
     private fun prefs() = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
 
     private fun addKeyRow(layout: LinearLayout, hint: String, prefName: String, label: String) {
@@ -173,6 +193,62 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    // Agar command "kholo" wali hai to true return karta hai (kaam yahin ho jata hai)
+    private fun tryOpenApp(said: String): Boolean {
+        val s = said.lowercase(Locale.getDefault())
+        if (openWords.none { s.contains(it) }) return false
+
+        var name = s
+        for (w in openWords) name = name.replace(w, " ")
+        for (w in listOf("जार्विस", "जारविस", "जर्विस", "जार्वी", "jarvis", "please", "कृपया", "ऐप", "एप", "app")) {
+            name = name.replace(w, " ")
+        }
+        name = name.trim().replace(Regex("\\s+"), " ")
+        if (name.isEmpty()) return false
+
+        val keys = mutableListOf(name)
+        for ((hi, en) in aliases) {
+            if (name.contains(hi)) keys.add(en)
+        }
+
+        val pm = packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcher, 0)
+        var foundPkg: String? = null
+        var foundLabel = ""
+        loop@ for (ri in apps) {
+            val label = ri.loadLabel(pm).toString().lowercase(Locale.getDefault())
+            for (k in keys) {
+                if (label.contains(k) || (label.length > 2 && k.contains(label))) {
+                    foundPkg = ri.activityInfo.packageName
+                    foundLabel = ri.loadLabel(pm).toString()
+                    break@loop
+                }
+            }
+        }
+
+        if (foundPkg == null) {
+            val msg = "$name ऐप नहीं मिला"
+            reply.text = msg
+            speak(msg)
+            return true
+        }
+
+        val launch = pm.getLaunchIntentForPackage(foundPkg)
+        if (launch == null) {
+            val msg = "$foundLabel नहीं खुल पाया"
+            reply.text = msg
+            speak(msg)
+            return true
+        }
+        val msg = "$foundLabel खोल रहा हूँ"
+        reply.text = msg
+        speakPhone(msg)
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launch)
+        return true
+    }
+
     private fun askGroq(question: String) {
         val key = prefs().getString("qkey", "") ?: ""
         if (key.isEmpty()) {
@@ -224,6 +300,11 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun handleCommand(said: String) {
+        if (tryOpenApp(said)) return
+        askGroq(said)
+    }
+
     private fun startListening() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
@@ -252,7 +333,7 @@ class MainActivity : Activity() {
                     result.text = "Kuch nahi suna"
                 } else {
                     result.text = "Aapne kaha: $said"
-                    askGroq(said)
+                    handleCommand(said)
                 }
                 status.text = "Dobara bolne ke liye Bolo dabao."
             }
