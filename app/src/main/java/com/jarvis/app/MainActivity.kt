@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -14,9 +15,11 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
@@ -26,10 +29,30 @@ class MainActivity : Activity() {
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var player: MediaPlayer? = null
     private lateinit var status: TextView
     private lateinit var result: TextView
     private lateinit var reply: TextView
-    private lateinit var keyBox: EditText
+
+    private fun prefs() = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
+
+    private fun addKeyRow(layout: LinearLayout, hint: String, prefName: String, label: String) {
+        val box = EditText(this)
+        box.hint = hint
+        box.isSingleLine = true
+        val btn = Button(this)
+        btn.text = label
+        btn.setOnClickListener {
+            val k = box.text.toString().trim()
+            if (k.isNotEmpty()) {
+                prefs().edit().putString(prefName, k).apply()
+                box.setText("")
+                status.text = "Save ho gaya."
+            }
+        }
+        layout.addView(box)
+        layout.addView(btn)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +60,7 @@ class MainActivity : Activity() {
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.gravity = Gravity.CENTER_HORIZONTAL
-        layout.setPadding(40, 100, 40, 40)
+        layout.setPadding(40, 100, 40, 80)
 
         status = TextView(this)
         status.text = "Namaste! Main Jarvis hoon."
@@ -53,31 +76,20 @@ class MainActivity : Activity() {
 
         reply = TextView(this)
         reply.textSize = 20f
-        reply.setPadding(0, 40, 0, 0)
-
-        keyBox = EditText(this)
-        keyBox.hint = "Groq API key yahan paste karo"
-        keyBox.isSingleLine = true
-
-        val saveBtn = Button(this)
-        saveBtn.text = "Key save karo"
-        saveBtn.setOnClickListener {
-            val k = keyBox.text.toString().trim()
-            if (k.isNotEmpty()) {
-                getSharedPreferences("jarvis", Context.MODE_PRIVATE)
-                    .edit().putString("qkey", k).apply()
-                keyBox.setText("")
-                status.text = "Key save ho gayi."
-            }
-        }
+        reply.setPadding(0, 40, 0, 40)
 
         layout.addView(status)
         layout.addView(button)
         layout.addView(result)
         layout.addView(reply)
-        layout.addView(keyBox)
-        layout.addView(saveBtn)
-        setContentView(layout)
+
+        addKeyRow(layout, "Groq key yahan paste karo", "qkey", "Groq key save karo")
+        addKeyRow(layout, "ElevenLabs key yahan paste karo", "ekey", "ElevenLabs key save karo")
+        addKeyRow(layout, "ElevenLabs Voice ID yahan paste karo", "vid", "Voice ID save karo")
+
+        val scroll = ScrollView(this)
+        scroll.addView(layout)
+        setContentView(scroll)
 
         tts = TextToSpeech(this) { s ->
             if (s == TextToSpeech.SUCCESS) {
@@ -93,9 +105,76 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun speakPhone(text: String) {
+        if (ttsReady) {
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+        } else {
+            status.text = "Hindi voice phone mein install nahi hai"
+        }
+    }
+
+    private fun speak(text: String) {
+        val ekey = prefs().getString("ekey", "") ?: ""
+        val vid = prefs().getString("vid", "") ?: ""
+        if (ekey.isEmpty() || vid.isEmpty()) {
+            speakPhone(text)
+            return
+        }
+        Thread {
+            var file: File? = null
+            var err = ""
+            try {
+                val body = JSONObject()
+                body.put("text", text)
+                body.put("model_id", "eleven_multilingual_v2")
+
+                val conn = URL("https://api.elevenlabs.io/v1/text-to-speech/$vid?output_format=mp3_44100_128")
+                    .openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("xi-api-key", ekey)
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Accept", "audio/mpeg")
+                conn.doOutput = true
+                conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
+
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    val f = File(cacheDir, "jarvis.mp3")
+                    conn.inputStream.use { input ->
+                        f.outputStream().use { out -> input.copyTo(out) }
+                    }
+                    file = f
+                } else {
+                    val t = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
+                    err = "ElevenLabs error ($code): " + t.take(200)
+                }
+            } catch (e: Exception) {
+                err = "ElevenLabs error: ${e.message}"
+            }
+            val f2 = file
+            runOnUiThread {
+                if (f2 != null) {
+                    try {
+                        player?.release()
+                        val mp = MediaPlayer()
+                        mp.setDataSource(f2.absolutePath)
+                        mp.prepare()
+                        mp.start()
+                        player = mp
+                    } catch (e: Exception) {
+                        status.text = "Play error: ${e.message}"
+                        speakPhone(text)
+                    }
+                } else {
+                    status.text = err
+                    speakPhone(text)
+                }
+            }
+        }.start()
+    }
+
     private fun askGroq(question: String) {
-        val key = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
-            .getString("qkey", "") ?: ""
+        val key = prefs().getString("qkey", "") ?: ""
         if (key.isEmpty()) {
             reply.text = "Pehle neeche Groq key save karo."
             return
@@ -140,13 +219,7 @@ class MainActivity : Activity() {
             }
             runOnUiThread {
                 reply.text = answer
-                if (ok) {
-                    if (ttsReady) {
-                        tts?.speak(answer, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
-                    } else {
-                        status.text = "Hindi voice phone mein install nahi hai"
-                    }
-                }
+                if (ok) speak(answer)
             }
         }.start()
     }
@@ -162,6 +235,7 @@ class MainActivity : Activity() {
             return
         }
         tts?.stop()
+        try { player?.stop() } catch (e: Exception) {}
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer?.setRecognitionListener(object : RecognitionListener {
@@ -196,6 +270,7 @@ class MainActivity : Activity() {
         recognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
+        player?.release()
         super.onDestroy()
     }
 }
