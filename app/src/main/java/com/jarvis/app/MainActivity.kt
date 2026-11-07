@@ -1,3 +1,4 @@
+
 package com.jarvis.app
 
 import android.Manifest
@@ -56,7 +57,7 @@ class MainActivity : Activity() {
         reply.setPadding(0, 40, 0, 0)
 
         keyBox = EditText(this)
-        keyBox.hint = "Gemini API key yahan paste karo"
+        keyBox.hint = "Groq API key yahan paste karo"
         keyBox.isSingleLine = true
 
         val saveBtn = Button(this)
@@ -65,7 +66,7 @@ class MainActivity : Activity() {
             val k = keyBox.text.toString().trim()
             if (k.isNotEmpty()) {
                 getSharedPreferences("jarvis", Context.MODE_PRIVATE)
-                    .edit().putString("gkey", k).apply()
+                    .edit().putString("qkey", k).apply()
                 keyBox.setText("")
                 status.text = "Key save ho gayi."
             }
@@ -93,11 +94,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun askGemini(question: String) {
+    private fun askGroq(question: String) {
         val key = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
-            .getString("gkey", "") ?: ""
+            .getString("qkey", "") ?: ""
         if (key.isEmpty()) {
-            reply.text = "Pehle neeche Gemini key save karo."
+            reply.text = "Pehle neeche Groq key save karo."
             return
         }
         reply.text = "Jarvis soch raha hai..."
@@ -105,20 +106,21 @@ class MainActivity : Activity() {
             var answer: String
             var ok = false
             try {
-                val sys = JSONObject().put("parts", JSONArray().put(
-                    JSONObject().put("text",
-                        "Tum Jarvis ho, ek madadgar Hindi voice assistant. Hamesha Devanagari Hindi mein, 1-2 chhote vaakyon mein jawab do. Koi symbol ya emoji mat use karo.")))
-                val content = JSONObject().put("role", "user").put("parts",
-                    JSONArray().put(JSONObject().put("text", question)))
+                val msgs = JSONArray()
+                msgs.put(JSONObject().put("role", "system").put("content",
+                    "Tum Jarvis ho, ek madadgar Hindi voice assistant. Hamesha Devanagari Hindi mein, 1-2 chhote vaakyon mein jawab do. Koi symbol ya emoji mat use karo."))
+                msgs.put(JSONObject().put("role", "user").put("content", question))
                 val body = JSONObject()
-                body.put("system_instruction", sys)
-                body.put("contents", JSONArray().put(content))
+                body.put("model", "llama-3.3-70b-versatile")
+                body.put("messages", msgs)
+                body.put("max_tokens", 300)
 
-                val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent")
+                val conn = URL("https://api.groq.com/openai/v1/chat/completions")
                     .openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
-                conn.setRequestProperty("x-goog-api-key", key)
-                conn.setRequestProperty("content-type", "application/json")
+                conn.setRequestProperty("Authorization", "Bearer $key")
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("User-Agent", "JarvisApp/1.0")
                 conn.doOutput = true
                 conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
 
@@ -126,17 +128,13 @@ class MainActivity : Activity() {
                 val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                 val text = stream.bufferedReader(Charsets.UTF_8).readText()
                 if (code in 200..299) {
-                    val parts = JSONObject(text).getJSONArray("candidates")
-                        .getJSONObject(0).getJSONObject("content").getJSONArray("parts")
-                    val sb = StringBuilder()
-                    for (i in 0 until parts.length()) {
-                        sb.append(parts.getJSONObject(i).optString("text", ""))
-                    }
-                    answer = sb.toString().trim()
+                    answer = JSONObject(text).getJSONArray("choices")
+                        .getJSONObject(0).getJSONObject("message")
+                        .getString("content").trim()
                     ok = answer.isNotEmpty()
                     if (!ok) answer = "Jawab khaali aaya."
                 } else {
-                    answer = "Gemini error ($code): $text"
+                    answer = "Groq error ($code): $text"
                 }
             } catch (e: Exception) {
                 answer = "Error: ${e.message}"
@@ -168,37 +166,4 @@ class MainActivity : Activity() {
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { status.text = "Boliye, main sun raha hoon..." }
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() { status.text = "Samajh raha hoon..." }
-            override fun onError(error: Int) { status.text = "Error aaya (code $error). Dobara Bolo dabao." }
-            override fun onResults(results: Bundle?) {
-                val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val said = list?.firstOrNull()
-                if (said == null) {
-                    result.text = "Kuch nahi suna"
-                } else {
-                    result.text = "Aapne kaha: $said"
-                    askGemini(said)
-                }
-                status.text = "Dobara bolne ke liye Bolo dabao."
-            }
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-        recognizer?.startListening(intent)
-    }
-
-    override fun onDestroy() {
-        recognizer?.destroy()
-        tts?.stop()
-        tts?.shutdown()
-        super.onDestroy()
-    }
-}
+            override fu
