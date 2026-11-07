@@ -196,18 +196,25 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun findApp(keys: List<String>): Pair<String, String>? {
+    private fun installedLabels(): List<Pair<String, String>> {
         val pm = packageManager
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(launcher, 0)
-        for (ri in apps) {
-            val labelRaw = ri.loadLabel(pm).toString()
+        val out = mutableListOf<Pair<String, String>>()
+        for (ri in pm.queryIntentActivities(launcher, 0)) {
+            out.add(Pair(ri.activityInfo.packageName, ri.loadLabel(pm).toString()))
+        }
+        return out
+    }
+
+    private fun findApp(keys: List<String>): Pair<String, String>? {
+        val apps = installedLabels()
+        for ((pkg, labelRaw) in apps) {
             val label = labelRaw.lowercase(Locale.getDefault()).replace(" ", "")
             for (k0 in keys) {
                 val k = k0.lowercase(Locale.getDefault()).replace(" ", "")
                 if (k.length < 2) continue
                 if (label.contains(k) || (label.length > 2 && k.contains(label))) {
-                    return Pair(ri.activityInfo.packageName, labelRaw)
+                    return Pair(pkg, labelRaw)
                 }
             }
         }
@@ -261,13 +268,15 @@ class MainActivity : Activity() {
         }
 
         reply.text = "$name ढूंढ रहा हूँ..."
+        val labels = installedLabels().map { it.second }.distinct().take(200)
         Thread {
-            var english = ""
+            var picked = ""
             try {
                 val msgs = JSONArray()
                 msgs.put(JSONObject().put("role", "system").put("content",
-                    "You convert a spoken Hindi app name into the app's official English name as it appears on an Android phone. Reply with ONLY the name, one to three words, no punctuation, no explanation."))
-                msgs.put(JSONObject().put("role", "user").put("content", name))
+                    "The user spoke a Hindi voice command to open an Android app. Speech recognition often mishears app names, so the spoken text may be a wrong phonetic version of the real name. You are given the list of installed apps. Choose the ONE installed app that best matches what the user most likely meant, judging by sound and meaning. Reply with ONLY that app name copied exactly from the list. If nothing is a reasonable match, reply NONE."))
+                msgs.put(JSONObject().put("role", "user").put("content",
+                    "Spoken text: " + name + "\nInstalled apps: " + labels.joinToString(" | ")))
                 val body = JSONObject()
                 body.put("model", "openai/gpt-oss-120b")
                 body.put("messages", msgs)
@@ -284,19 +293,23 @@ class MainActivity : Activity() {
                 val code = conn.responseCode
                 if (code in 200..299) {
                     val text = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                    english = JSONObject(text).getJSONArray("choices")
+                    picked = JSONObject(text).getJSONArray("choices")
                         .getJSONObject(0).getJSONObject("message")
                         .optString("content", "").trim()
                 }
             } catch (e: Exception) {
             }
             runOnUiThread {
-                val found = if (english.isNotEmpty()) findApp(listOf(english)) else null
+                var found: Pair<String, String>? = null
+                if (picked.isNotEmpty() && !picked.equals("NONE", ignoreCase = true)) {
+                    found = installedLabels().firstOrNull { it.second.equals(picked, ignoreCase = true) }
+                    if (found == null) found = findApp(listOf(picked))
+                }
                 if (found != null) {
                     launchApp(found.first, found.second)
                 } else {
                     val msg = "$name ऐप नहीं मिला"
-                    reply.text = msg + (if (english.isNotEmpty()) " (खोजा: $english)" else "")
+                    reply.text = msg + (if (picked.isNotEmpty()) " (खोजा: $picked)" else "")
                     speak(msg)
                 }
             }
