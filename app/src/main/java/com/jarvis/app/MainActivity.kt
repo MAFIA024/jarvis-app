@@ -51,7 +51,10 @@ class MainActivity : Activity() {
         "कैलकुलेटर" to "calculator", "घड़ी" to "clock",
         "फोन" to "phone", "मैसेज" to "messages", "जीमेल" to "gmail",
         "टेलीग्राम" to "telegram", "स्पॉटिफाई" to "spotify",
-        "प्ले स्टोर" to "play store", "प्लेस्टोर" to "play store"
+        "प्ले स्टोर" to "play store", "प्लेस्टोर" to "play store",
+        "चैट जीपीटी" to "chatgpt", "चैटजीपीटी" to "chatgpt",
+        "अटेंडेंस" to "attendance", "हाजिरी" to "attendance",
+        "क्लॉड" to "claude", "जेमिनी" to "gemini"
     )
 
     private fun prefs() = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
@@ -193,7 +196,39 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    // Agar command "kholo" wali hai to true return karta hai (kaam yahin ho jata hai)
+    private fun findApp(keys: List<String>): Pair<String, String>? {
+        val pm = packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcher, 0)
+        for (ri in apps) {
+            val labelRaw = ri.loadLabel(pm).toString()
+            val label = labelRaw.lowercase(Locale.getDefault()).replace(" ", "")
+            for (k0 in keys) {
+                val k = k0.lowercase(Locale.getDefault()).replace(" ", "")
+                if (k.length < 2) continue
+                if (label.contains(k) || (label.length > 2 && k.contains(label))) {
+                    return Pair(ri.activityInfo.packageName, labelRaw)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun launchApp(pkg: String, label: String) {
+        val launch = packageManager.getLaunchIntentForPackage(pkg)
+        if (launch == null) {
+            val msg = "$label नहीं खुल पाया"
+            reply.text = msg
+            speak(msg)
+            return
+        }
+        val msg = "$label खोल रहा हूँ"
+        reply.text = msg
+        speakPhone(msg)
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launch)
+    }
+
     private fun tryOpenApp(said: String): Boolean {
         val s = said.lowercase(Locale.getDefault())
         if (openWords.none { s.contains(it) }) return false
@@ -211,41 +246,61 @@ class MainActivity : Activity() {
             if (name.contains(hi)) keys.add(en)
         }
 
-        val pm = packageManager
-        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(launcher, 0)
-        var foundPkg: String? = null
-        var foundLabel = ""
-        loop@ for (ri in apps) {
-            val label = ri.loadLabel(pm).toString().lowercase(Locale.getDefault())
-            for (k in keys) {
-                if (label.contains(k) || (label.length > 2 && k.contains(label))) {
-                    foundPkg = ri.activityInfo.packageName
-                    foundLabel = ri.loadLabel(pm).toString()
-                    break@loop
-                }
-            }
+        val first = findApp(keys)
+        if (first != null) {
+            launchApp(first.first, first.second)
+            return true
         }
 
-        if (foundPkg == null) {
+        val gkey = prefs().getString("qkey", "") ?: ""
+        if (gkey.isEmpty()) {
             val msg = "$name ऐप नहीं मिला"
             reply.text = msg
             speak(msg)
             return true
         }
 
-        val launch = pm.getLaunchIntentForPackage(foundPkg)
-        if (launch == null) {
-            val msg = "$foundLabel नहीं खुल पाया"
-            reply.text = msg
-            speak(msg)
-            return true
-        }
-        val msg = "$foundLabel खोल रहा हूँ"
-        reply.text = msg
-        speakPhone(msg)
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(launch)
+        reply.text = "$name ढूंढ रहा हूँ..."
+        Thread {
+            var english = ""
+            try {
+                val msgs = JSONArray()
+                msgs.put(JSONObject().put("role", "system").put("content",
+                    "You convert a spoken Hindi app name into the app's official English name as it appears on an Android phone. Reply with ONLY the name, one to three words, no punctuation, no explanation."))
+                msgs.put(JSONObject().put("role", "user").put("content", name))
+                val body = JSONObject()
+                body.put("model", "openai/gpt-oss-120b")
+                body.put("messages", msgs)
+                body.put("max_tokens", 800)
+
+                val conn = URL("https://api.groq.com/openai/v1/chat/completions")
+                    .openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Authorization", "Bearer $gkey")
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("User-Agent", "JarvisApp/1.0")
+                conn.doOutput = true
+                conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    val text = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                    english = JSONObject(text).getJSONArray("choices")
+                        .getJSONObject(0).getJSONObject("message")
+                        .optString("content", "").trim()
+                }
+            } catch (e: Exception) {
+            }
+            runOnUiThread {
+                val found = if (english.isNotEmpty()) findApp(listOf(english)) else null
+                if (found != null) {
+                    launchApp(found.first, found.second)
+                } else {
+                    val msg = "$name ऐप नहीं मिला"
+                    reply.text = msg + (if (english.isNotEmpty()) " (खोजा: $english)" else "")
+                    speak(msg)
+                }
+            }
+        }.start()
         return true
     }
 
