@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -37,6 +38,11 @@ class MainActivity : Activity() {
     private val openWords = listOf(
         "खोलो", "खोलिए", "खोल दो", "खोल", "चालू करो", "चलाओ",
         "kholo", "open", "start"
+    )
+
+    private val actionWords = listOf(
+        "सर्च", "search", "खोज", "ढूंढ", "ढूँढ", "रास्ता",
+        "बजाओ", "गाना", "play", "दिखाओ"
     )
 
     private val aliases = listOf(
@@ -317,6 +323,114 @@ class MainActivity : Activity() {
         return true
     }
 
+    private fun looksLikeAction(said: String): Boolean {
+        val s = said.lowercase(Locale.getDefault())
+        return actionWords.any { s.contains(it) }
+    }
+
+    private fun startUri(uri: String, pkg: String?): Boolean {
+        return try {
+            val i = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+            if (pkg != null) i.setPackage(pkg)
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun doAction(target: String, query: String): Boolean {
+        if (query.isEmpty()) return false
+        val q = Uri.encode(query)
+        val ok: Boolean
+        val msg: String
+        when (target) {
+            "youtube" -> {
+                val u = "https://www.youtube.com/results?search_query=$q"
+                ok = startUri(u, "com.google.android.youtube") || startUri(u, null)
+                msg = "यूट्यूब पर $query खोज रहा हूँ"
+            }
+            "google", "chrome" -> {
+                ok = startUri("https://www.google.com/search?q=$q", null)
+                msg = "गूगल पर $query खोज रहा हूँ"
+            }
+            "maps" -> {
+                ok = startUri("geo:0,0?q=$q", "com.google.android.apps.maps") ||
+                    startUri("https://www.google.com/maps/search/?api=1&query=$q", null)
+                msg = "मैप्स में $query खोज रहा हूँ"
+            }
+            "playstore" -> {
+                ok = startUri("market://search?q=$q&c=apps", null) ||
+                    startUri("https://play.google.com/store/search?q=$q", null)
+                msg = "प्ले स्टोर में $query खोज रहा हूँ"
+            }
+            "spotify" -> {
+                ok = startUri("spotify:search:$q", null) ||
+                    startUri("https://open.spotify.com/search/$q", null)
+                msg = "स्पॉटिफाई पर $query खोज रहा हूँ"
+            }
+            else -> return false
+        }
+        if (ok) {
+            reply.text = msg
+            speakPhone(msg)
+        }
+        return ok
+    }
+
+    private fun tryAction(said: String) {
+        val gkey = prefs().getString("qkey", "") ?: ""
+        if (gkey.isEmpty()) {
+            if (!tryOpenApp(said)) askGroq(said)
+            return
+        }
+        reply.text = "समझ रहा हूँ..."
+        Thread {
+            var target = ""
+            var query = ""
+            try {
+                val msgs = JSONArray()
+                msgs.put(JSONObject().put("role", "system").put("content",
+                    "You turn a Hindi voice command into a JSON action for an Android phone. Reply with ONLY JSON like {\"target\":\"youtube\",\"query\":\"TMKOC\"}. target must be one of: youtube, google, chrome, maps, playstore, spotify. Use google if the user wants to search the web without naming an app. query is the text to search or play, written the way a person would type it: use English letters for English words and brand or show names, and Devanagari for Hindi words. Fix obvious speech recognition mistakes. If the command is not a search, play or navigation request for one of these targets, reply {\"target\":\"none\",\"query\":\"\"}."))
+                msgs.put(JSONObject().put("role", "user").put("content", said))
+                val body = JSONObject()
+                body.put("model", "openai/gpt-oss-120b")
+                body.put("messages", msgs)
+                body.put("max_tokens", 800)
+
+                val conn = URL("https://api.groq.com/openai/v1/chat/completions")
+                    .openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Authorization", "Bearer $gkey")
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("User-Agent", "JarvisApp/1.0")
+                conn.doOutput = true
+                conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    val text = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                    val content = JSONObject(text).getJSONArray("choices")
+                        .getJSONObject(0).getJSONObject("message")
+                        .optString("content", "")
+                    val a = content.indexOf("{")
+                    val b = content.lastIndexOf("}")
+                    if (a >= 0 && b > a) {
+                        val j = JSONObject(content.substring(a, b + 1))
+                        target = j.optString("target", "").lowercase(Locale.getDefault())
+                        query = j.optString("query", "").trim()
+                    }
+                }
+            } catch (e: Exception) {
+            }
+            runOnUiThread {
+                if (!doAction(target, query)) {
+                    if (!tryOpenApp(said)) askGroq(said)
+                }
+            }
+        }.start()
+    }
+
     private fun askGroq(question: String) {
         val key = prefs().getString("qkey", "") ?: ""
         if (key.isEmpty()) {
@@ -369,6 +483,10 @@ class MainActivity : Activity() {
     }
 
     private fun handleCommand(said: String) {
+        if (looksLikeAction(said)) {
+            tryAction(said)
+            return
+        }
         if (tryOpenApp(said)) return
         askGroq(said)
     }
@@ -423,3 +541,14 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 }
+
+
+
+
+
+
+
+
+
+
+                
