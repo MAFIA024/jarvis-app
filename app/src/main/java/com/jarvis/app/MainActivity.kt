@@ -110,9 +110,9 @@ class MainActivity : Activity() {
                     "Tum Jarvis ho, ek madadgar Hindi voice assistant. Hamesha Devanagari Hindi mein, 1-2 chhote vaakyon mein jawab do. Koi symbol ya emoji mat use karo."))
                 msgs.put(JSONObject().put("role", "user").put("content", question))
                 val body = JSONObject()
-                body.put("model", "llama-3.3-70b-versatile")
+                body.put("model", "openai/gpt-oss-120b")
                 body.put("messages", msgs)
-                body.put("max_tokens", 300)
+                body.put("max_tokens", 1500)
 
                 val conn = URL("https://api.groq.com/openai/v1/chat/completions")
                     .openConnection() as HttpURLConnection
@@ -129,7 +129,7 @@ class MainActivity : Activity() {
                 if (code in 200..299) {
                     answer = JSONObject(text).getJSONArray("choices")
                         .getJSONObject(0).getJSONObject("message")
-                        .getString("content").trim()
+                        .optString("content", "").trim()
                     ok = answer.isNotEmpty()
                     if (!ok) answer = "Jawab khaali aaya."
                 } else {
@@ -198,4 +198,4 @@ class MainActivity : Activity() {
         tts?.shutdown()
         super.onDestroy()
     }
-}            
+}
