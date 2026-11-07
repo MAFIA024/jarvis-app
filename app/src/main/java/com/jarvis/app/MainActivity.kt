@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
@@ -18,10 +19,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 class MainActivity : Activity() {
 
     private var recognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
     private lateinit var status: TextView
     private lateinit var result: TextView
     private lateinit var reply: TextView
@@ -52,7 +56,7 @@ class MainActivity : Activity() {
         reply.setPadding(0, 40, 0, 0)
 
         keyBox = EditText(this)
-        keyBox.hint = "Claude API key yahan paste karo"
+        keyBox.hint = "Gemini API key yahan paste karo"
         keyBox.isSingleLine = true
 
         val saveBtn = Button(this)
@@ -61,7 +65,7 @@ class MainActivity : Activity() {
             val k = keyBox.text.toString().trim()
             if (k.isNotEmpty()) {
                 getSharedPreferences("jarvis", Context.MODE_PRIVATE)
-                    .edit().putString("key", k).apply()
+                    .edit().putString("gkey", k).apply()
                 keyBox.setText("")
                 status.text = "Key save ho gayi."
             }
@@ -75,36 +79,45 @@ class MainActivity : Activity() {
         layout.addView(saveBtn)
         setContentView(layout)
 
+        tts = TextToSpeech(this) { s ->
+            if (s == TextToSpeech.SUCCESS) {
+                val r = tts?.setLanguage(Locale("hi", "IN"))
+                ttsReady = r != TextToSpeech.LANG_MISSING_DATA &&
+                    r != TextToSpeech.LANG_NOT_SUPPORTED
+            }
+        }
+
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
         }
     }
 
-    private fun askClaude(question: String) {
+    private fun askGemini(question: String) {
         val key = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
-            .getString("key", "") ?: ""
+            .getString("gkey", "") ?: ""
         if (key.isEmpty()) {
-            reply.text = "Pehle neeche API key save karo."
+            reply.text = "Pehle neeche Gemini key save karo."
             return
         }
         reply.text = "Jarvis soch raha hai..."
         Thread {
             var answer: String
+            var ok = false
             try {
+                val sys = JSONObject().put("parts", JSONArray().put(
+                    JSONObject().put("text",
+                        "Tum Jarvis ho, ek madadgar Hindi voice assistant. Hamesha Devanagari Hindi mein, 1-2 chhote vaakyon mein jawab do. Koi symbol ya emoji mat use karo.")))
+                val content = JSONObject().put("role", "user").put("parts",
+                    JSONArray().put(JSONObject().put("text", question)))
                 val body = JSONObject()
-                body.put("model", "claude-sonnet-5-5")
-                body.put("max_tokens", 300)
-                body.put("system", "Tum Jarvis ho, ek madadgar Hindi voice assistant. Hamesha Hindi mein, 1-2 chhote vaakyon mein jawab do.")
-                val msgs = JSONArray()
-                msgs.put(JSONObject().put("role", "user").put("content", question))
-                body.put("messages", msgs)
+                body.put("system_instruction", sys)
+                body.put("contents", JSONArray().put(content))
 
-                val conn = URL("https://api.anthropic.com/v1/messages")
+                val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent")
                     .openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
-                conn.setRequestProperty("x-api-key", key)
-                conn.setRequestProperty("anthropic-version", "2023-06-01")
+                conn.setRequestProperty("x-goog-api-key", key)
                 conn.setRequestProperty("content-type", "application/json")
                 conn.doOutput = true
                 conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
@@ -112,16 +125,32 @@ class MainActivity : Activity() {
                 val code = conn.responseCode
                 val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                 val text = stream.bufferedReader(Charsets.UTF_8).readText()
-                answer = if (code in 200..299) {
-                    JSONObject(text).getJSONArray("content")
-                        .getJSONObject(0).getString("text")
+                if (code in 200..299) {
+                    val parts = JSONObject(text).getJSONArray("candidates")
+                        .getJSONObject(0).getJSONObject("content").getJSONArray("parts")
+                    val sb = StringBuilder()
+                    for (i in 0 until parts.length()) {
+                        sb.append(parts.getJSONObject(i).optString("text", ""))
+                    }
+                    answer = sb.toString().trim()
+                    ok = answer.isNotEmpty()
+                    if (!ok) answer = "Jawab khaali aaya."
                 } else {
-                    "Claude error ($code): $text"
+                    answer = "Gemini error ($code): $text"
                 }
             } catch (e: Exception) {
                 answer = "Error: ${e.message}"
             }
-            runOnUiThread { reply.text = answer }
+            runOnUiThread {
+                reply.text = answer
+                if (ok) {
+                    if (ttsReady) {
+                        tts?.speak(answer, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+                    } else {
+                        status.text = "Hindi voice phone mein install nahi hai"
+                    }
+                }
+            }
         }.start()
     }
 
@@ -135,6 +164,7 @@ class MainActivity : Activity() {
             status.text = "Is phone mein voice recognition nahi hai"
             return
         }
+        tts?.stop()
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer?.setRecognitionListener(object : RecognitionListener {
@@ -151,7 +181,7 @@ class MainActivity : Activity() {
                     result.text = "Kuch nahi suna"
                 } else {
                     result.text = "Aapne kaha: $said"
-                    askClaude(said)
+                    askGemini(said)
                 }
                 status.text = "Dobara bolne ke liye Bolo dabao."
             }
@@ -167,6 +197,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         recognizer?.destroy()
+        tts?.stop()
+        tts?.shutdown()
         super.onDestroy()
     }
 }
