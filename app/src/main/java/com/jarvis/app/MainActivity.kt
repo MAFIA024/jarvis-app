@@ -330,12 +330,12 @@ class MainActivity : Activity() {
             try {
                 val msgs = JSONArray()
                 msgs.put(JSONObject().put("role", "system").put("content",
-                    "Tum Jarvis ho, ek madadgar Hindi voice assistant. Hamesha Devanagari Hindi mein, 1-2 chhote vaakyon mein jawab do. Koi symbol ya emoji mat use karo."))
+                    "Tum Jarvis ho, ek smart aur advanced Hindi voice assistant. Hamesha Devanagari Hindi mein jawab do. Jawab poora aur vistaar se do: kaaran, example aur zaroori details batao, lagbhag 100 se 150 shabdon mein. Koi markdown, star, hash, bullet ya emoji mat use karo, kyunki jawab bolkar sunaya jata hai. Baat-cheet jaise saaf vaakyon mein likho."))
                 msgs.put(JSONObject().put("role", "user").put("content", question))
                 val body = JSONObject()
                 body.put("model", "openai/gpt-oss-120b")
                 body.put("messages", msgs)
-                body.put("max_tokens", 1500)
+                body.put("max_tokens", 4000)
 
                 val conn = URL("https://api.groq.com/openai/v1/chat/completions")
                     .openConnection() as HttpURLConnection
