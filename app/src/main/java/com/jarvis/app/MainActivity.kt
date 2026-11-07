@@ -1,4 +1,3 @@
-
 package com.jarvis.app
 
 import android.Manifest
@@ -166,4 +165,37 @@ class MainActivity : Activity() {
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fu
+            override fun onReadyForSpeech(params: Bundle?) { status.text = "Boliye, main sun raha hoon..." }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() { status.text = "Samajh raha hoon..." }
+            override fun onError(error: Int) { status.text = "Error aaya (code $error). Dobara Bolo dabao." }
+            override fun onResults(results: Bundle?) {
+                val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val said = list?.firstOrNull()
+                if (said == null) {
+                    result.text = "Kuch nahi suna"
+                } else {
+                    result.text = "Aapne kaha: $said"
+                    askGroq(said)
+                }
+                status.text = "Dobara bolne ke liye Bolo dabao."
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
+        recognizer?.startListening(intent)
+    }
+
+    override fun onDestroy() {
+        recognizer?.destroy()
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
+    }
+}            
